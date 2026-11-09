@@ -121,7 +121,7 @@ async def setup_request(req: SetupRequest):
         raise HTTPException(409, "Bot already configured")
     if req.chat_id <= 0:
         raise HTTPException(400, "Use your positive private Telegram user Chat ID")
-    if not __import__("re").fullmatch(r"\\d{5,15}:[A-Za-z0-9_-]{20,}", req.token):
+    if not __import__("re").fullmatch(r"[0-9]{5,15}:[A-Za-z0-9_-]{20,}", req.token):
         raise HTTPException(400, "Invalid bot token format")
     async with SETUP_LOCK:
         if is_configured():
@@ -135,7 +135,7 @@ async def setup_request(req: SetupRequest):
             code = f"{secrets.randbelow(1000000):06d}"
             await bot.send_message(
                 chat_id=req.chat_id,
-                text=f"Kestrel Remote setup code: {code}\\nExpires in 5 minutes. Do not share this code.",
+                text=f"Kestrel Remote setup code: {code}\nExpires in 5 minutes. Do not share this code.",
             )
         except Exception:
             raise HTTPException(400, "Telegram rejected the token or chat ID. Start the bot in Telegram first.")
