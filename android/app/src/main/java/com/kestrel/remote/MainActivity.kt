@@ -31,6 +31,7 @@ class MainActivity : Activity() {
     private lateinit var stateText: TextView
     private lateinit var botTokenInput: EditText
     private lateinit var chatIdInput: EditText
+    private lateinit var telegramSetupCodeInput: EditText
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -139,6 +140,22 @@ class MainActivity : Activity() {
         root.addView(showToken, matchWidth())
         root.addView(saveTelegram, matchWidth())
         root.addView(testTelegram, matchWidth())
+        telegramSetupCodeInput = EditText(this).apply {
+            hint = "6-digit code received in Telegram"
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_NUMBER
+        }
+        val setupTelegram = Button(this).apply {
+            text = "Connect Telegram to Railway"
+            setOnClickListener { requestRailwayTelegramSetup() }
+        }
+        val verifyTelegram = Button(this).apply {
+            text = "Verify Code & Activate Bot"
+            setOnClickListener { verifyRailwayTelegramSetup() }
+        }
+        root.addView(setupTelegram, matchWidth())
+        root.addView(telegramSetupCodeInput, matchWidth())
+        root.addView(verifyTelegram, matchWidth())
         setContentView(android.widget.ScrollView(this).apply { addView(root) })
     }
 
@@ -167,6 +184,46 @@ class MainActivity : Activity() {
                 TelegramSettings.sendTest(token, chatId)
             } catch (error: Exception) {
                 "Telegram test failed: ${error.message ?: "Connection error"}"
+            }
+            runOnUiThread { toast(result) }
+        }
+    }
+
+    private fun requestRailwayTelegramSetup() {
+        val baseUrl = serverInput.text.toString().trim().trimEnd('/')
+        val token = botTokenInput.text.toString().trim()
+        val chatId = chatIdInput.text.toString().trim()
+        if (!baseUrl.startsWith("https://") ||
+            !Regex("^\\d{5,15}:[A-Za-z0-9_-]{20,}$").matches(token) ||
+            !Regex("^\\d{1,20}$").matches(chatId)) {
+            toast("Enter a valid HTTPS Railway URL, Bot Token and private Chat ID.")
+            return
+        }
+        toast("Requesting setup code…")
+        executor.execute {
+            val result = try {
+                ApiClient.requestTelegramSetup(baseUrl, token, chatId)
+                "Check your Telegram chat for the six-digit setup code."
+            } catch (error: Exception) {
+                "Setup failed: ${error.message ?: "Connection error"}"
+            }
+            runOnUiThread { toast(result) }
+        }
+    }
+
+    private fun verifyRailwayTelegramSetup() {
+        val baseUrl = serverInput.text.toString().trim().trimEnd('/')
+        val code = telegramSetupCodeInput.text.toString().trim()
+        if (!baseUrl.startsWith("https://") || !Regex("^\\d{6}$").matches(code)) {
+            toast("Enter Railway HTTPS URL and six-digit Telegram code.")
+            return
+        }
+        executor.execute {
+            val result = try {
+                ApiClient.verifyTelegramSetup(baseUrl, code)
+                "Telegram bot activated on Railway."
+            } catch (error: Exception) {
+                "Verification failed: ${error.message ?: "Connection error"}"
             }
             runOnUiThread { toast(result) }
         }
