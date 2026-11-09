@@ -53,6 +53,18 @@ object ApiClient {
         }
     }
 
+    fun requestTelegramSetup(baseUrl: String, botToken: String, chatId: String) {
+        val body = JSONObject()
+            .put("token", botToken)
+            .put("chat_id", chatId.toLong())
+        request(baseUrl, "/api/setup/request", "POST", body = body)
+    }
+
+    fun verifyTelegramSetup(baseUrl: String, code: String) {
+        val body = JSONObject().put("code", code)
+        request(baseUrl, "/api/setup/verify", "POST", body = body)
+    }
+
     fun pair(baseUrl: String, code: String, deviceId: String, name: String): String {
         val body = JSONObject()
             .put("code", code.trim().uppercase())
