@@ -162,8 +162,8 @@ class MainActivity : Activity() {
     private fun saveTelegramSettings() {
         val token = botTokenInput.text.toString().trim()
         val chatId = chatIdInput.text.toString().trim()
-        if (!Regex("^\\d{5,15}:[A-Za-z0-9_-]{20,}$").matches(token) ||
-            !Regex("^-?\\d{1,20}$").matches(chatId)) {
+        if (!Regex("^\[0-9]{5,15}:[A-Za-z0-9_-]{20,}$").matches(token) ||
+            !Regex("^-?\[0-9]{1,20}$").matches(chatId)) {
             toast("Enter a valid Telegram bot token and numeric Chat ID.")
             return
         }
@@ -194,8 +194,8 @@ class MainActivity : Activity() {
         val token = botTokenInput.text.toString().trim()
         val chatId = chatIdInput.text.toString().trim()
         if (!baseUrl.startsWith("https://") ||
-            !Regex("^\\d{5,15}:[A-Za-z0-9_-]{20,}$").matches(token) ||
-            !Regex("^\\d{1,20}$").matches(chatId)) {
+            !Regex("^\[0-9]{5,15}:[A-Za-z0-9_-]{20,}$").matches(token) ||
+            !Regex("^\[0-9]{1,20}$").matches(chatId)) {
             toast("Enter a valid HTTPS Railway URL, Bot Token and private Chat ID.")
             return
         }
@@ -214,7 +214,7 @@ class MainActivity : Activity() {
     private fun verifyRailwayTelegramSetup() {
         val baseUrl = serverInput.text.toString().trim().trimEnd('/')
         val code = telegramSetupCodeInput.text.toString().trim()
-        if (!baseUrl.startsWith("https://") || !Regex("^\\d{6}$").matches(code)) {
+        if (!baseUrl.startsWith("https://") || !Regex("^\[0-9]{6}$").matches(code)) {
             toast("Enter Railway HTTPS URL and six-digit Telegram code.")
             return
         }
