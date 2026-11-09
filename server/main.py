@@ -11,15 +11,18 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
-from telegram import Update
+from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, ContextTypes
 import uvicorn
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-ADMIN_ID = int(os.environ["ADMIN_ID"])
+BOT_TOKEN = None
+ADMIN_ID = None
+BOT_APP = None
+PENDING_SETUP = {}
+SETUP_LOCK = asyncio.Lock()
 DB_PATH = BASE_DIR / "kestrel.sqlite3"
 
 api = FastAPI(title="Kestrel Remote API", version="1.0.0")
@@ -39,6 +42,7 @@ def connect_db():
 def initialize_db():
     with connect_db() as conn:
         conn.executescript("""
+        CREATE TABLE IF NOT EXISTS bot_config (id INTEGER PRIMARY KEY CHECK(id=1), token TEXT NOT NULL, admin_id INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS pair_codes (
             code TEXT PRIMARY KEY,
             expires_at REAL NOT NULL
@@ -90,6 +94,92 @@ def authenticate_device(device_id: str, authorization: str | None):
     if not row or not secrets.compare_digest(row["token_hash"], supplied_hash):
         raise HTTPException(status_code=403, detail="Invalid device credentials")
 
+
+
+class SetupRequest(BaseModel):
+    token: str = Field(min_length=30, max_length=200)
+    chat_id: int
+
+
+class VerifyRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=6)
+
+
+def is_configured():
+    with connect_db() as conn:
+        return conn.execute("SELECT 1 FROM bot_config WHERE id=1").fetchone() is not None
+
+
+@api.get("/api/setup/status")
+def setup_status():
+    return {"configured": is_configured()}
+
+
+@api.post("/api/setup/request")
+async def setup_request(req: SetupRequest):
+    if is_configured():
+        raise HTTPException(409, "Bot already configured")
+    if req.chat_id <= 0:
+        raise HTTPException(400, "Use your positive private Telegram user Chat ID")
+    if not __import__("re").fullmatch(r"\\d{5,15}:[A-Za-z0-9_-]{20,}", req.token):
+        raise HTTPException(400, "Invalid bot token format")
+    async with SETUP_LOCK:
+        if is_configured():
+            raise HTTPException(409, "Bot already configured")
+        now = time.monotonic()
+        if PENDING_SETUP.get("until", 0) > now:
+            raise HTTPException(429, "Setup pending; wait before retrying")
+        bot = Bot(req.token)
+        try:
+            await bot.get_me()
+            code = f"{secrets.randbelow(1000000):06d}"
+            await bot.send_message(
+                chat_id=req.chat_id,
+                text=f"Kestrel Remote setup code: {code}\\nExpires in 5 minutes. Do not share this code.",
+            )
+        except Exception:
+            raise HTTPException(400, "Telegram rejected the token or chat ID. Start the bot in Telegram first.")
+        PENDING_SETUP.clear()
+        PENDING_SETUP.update({
+            "token": req.token,
+            "chat_id": req.chat_id,
+            "code_hash": hash_token(code),
+            "until": now + 300,
+            "attempts": 0,
+        })
+    return {"ok": True, "message": "Check Telegram for the six-digit setup code"}
+
+
+@api.post("/api/setup/verify")
+async def setup_verify(req: VerifyRequest):
+    async with SETUP_LOCK:
+        if is_configured():
+            raise HTTPException(409, "Bot already configured")
+        if PENDING_SETUP.get("until", 0) <= time.monotonic():
+            PENDING_SETUP.clear()
+            raise HTTPException(400, "Setup code expired")
+        PENDING_SETUP["attempts"] += 1
+        if PENDING_SETUP["attempts"] > 5:
+            PENDING_SETUP.clear()
+            raise HTTPException(429, "Too many attempts")
+        if not secrets.compare_digest(
+            hash_token(req.code), PENDING_SETUP["code_hash"]
+        ):
+            raise HTTPException(400, "Incorrect setup code")
+        token = PENDING_SETUP["token"]
+        admin_id = PENDING_SETUP["chat_id"]
+        with connect_db() as conn:
+            conn.execute(
+                "INSERT INTO bot_config(id, token, admin_id) VALUES (1, ?, ?)",
+                (token, admin_id),
+            )
+        PENDING_SETUP.clear()
+        try:
+            await start_bot(token, admin_id)
+        except Exception:
+            # Startup retries after a Railway restart.
+            pass
+    return {"configured": True}
 
 class PairRequest(BaseModel):
     code: str = Field(min_length=8, max_length=8)
@@ -295,14 +385,36 @@ async def cmd_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def start_bot(token: str, admin_id: int):
+    global BOT_TOKEN, ADMIN_ID, BOT_APP
+    if BOT_APP is not None:
+        return
+    app = Application.builder().token(token).build()
+    app.add_handler(CommandHandler("newpair", cmd_newpair))
+    app.add_handler(CommandHandler("devices", cmd_devices))
+    app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("notify", cmd_notify))
+    app.add_handler(CommandHandler("revoke", cmd_revoke))
+    await app.initialize()
+    try:
+        await app.start()
+        await app.updater.start_polling()
+    except Exception:
+        await app.stop()
+        await app.shutdown()
+        raise
+    BOT_TOKEN, ADMIN_ID, BOT_APP = token, admin_id, app
+
+
 async def run():
     initialize_db()
-    bot = Application.builder().token(BOT_TOKEN).build()
-    bot.add_handler(CommandHandler("newpair", cmd_newpair))
-    bot.add_handler(CommandHandler("devices", cmd_devices))
-    bot.add_handler(CommandHandler("status", cmd_status))
-    bot.add_handler(CommandHandler("notify", cmd_notify))
-    bot.add_handler(CommandHandler("revoke", cmd_revoke))
+    with connect_db() as conn:
+        row = conn.execute("SELECT token, admin_id FROM bot_config WHERE id=1").fetchone()
+    if row:
+        try:
+            await start_bot(row["token"], row["admin_id"])
+        except Exception as exc:
+            print(f"Telegram bot startup failed: {type(exc).__name__}")
 
     config = uvicorn.Config(
         api,
@@ -311,15 +423,13 @@ async def run():
         log_level="info",
     )
     server = uvicorn.Server(config)
-
-    async with bot:
-        await bot.start()
-        await bot.updater.start_polling()
-        try:
-            await server.serve()
-        finally:
-            await bot.updater.stop()
-            await bot.stop()
+    try:
+        await server.serve()
+    finally:
+        if BOT_APP is not None:
+            await BOT_APP.updater.stop()
+            await BOT_APP.stop()
+            await BOT_APP.shutdown()
 
 
 if __name__ == "__main__":
