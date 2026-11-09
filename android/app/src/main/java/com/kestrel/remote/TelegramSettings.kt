@@ -74,10 +74,10 @@ object TelegramSettings {
             .getString("chat_id", "").orEmpty()
 
     fun sendTest(token: String, chatId: String): String {
-        require(Regex("^\\d{5,15}:[A-Za-z0-9_-]{20,}$").matches(token)) {
+        require(Regex("^\[0-9]{5,15}:[A-Za-z0-9_-]{20,}$").matches(token)) {
             "Invalid Telegram bot token format"
         }
-        require(Regex("^-?\\d{1,20}$").matches(chatId)) {
+        require(Regex("^-?\[0-9]{1,20}$").matches(chatId)) {
             "Enter a numeric Telegram Chat ID"
         }
 
