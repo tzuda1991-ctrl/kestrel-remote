@@ -14,6 +14,9 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import android.text.InputType
+import android.text.method.PasswordTransformationMethod
+import android.widget.CheckBox
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import java.util.UUID
@@ -26,6 +29,8 @@ class MainActivity : Activity() {
     private lateinit var codeInput: EditText
     private lateinit var nameInput: EditText
     private lateinit var stateText: TextView
+    private lateinit var botTokenInput: EditText
+    private lateinit var chatIdInput: EditText
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,7 +90,86 @@ class MainActivity : Activity() {
         root.addView(pairButton, matchWidth())
         root.addView(connectButton, matchWidth())
         root.addView(disconnectButton, matchWidth())
-        setContentView(root)
+
+        val telegramHeading = TextView(this).apply {
+            text = "Telegram Settings"
+            textSize = 22f
+            setPadding(0, 32, 0, 12)
+        }
+        val telegramHelp = TextView(this).apply {
+            text = "Settings are encrypted on this phone. These fields do not change Railway's BOT_TOKEN or ADMIN_ID."
+            textSize = 13f
+        }
+        botTokenInput = EditText(this).apply {
+            hint = "Telegram Bot Token"
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setText(TelegramSettings.loadToken(this@MainActivity))
+        }
+        chatIdInput = EditText(this).apply {
+            hint = "Telegram Chat ID (numeric)"
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED
+            setText(TelegramSettings.loadChatId(this@MainActivity))
+        }
+        val showToken = CheckBox(this).apply {
+            text = "Show bot token"
+            setOnCheckedChangeListener { _, checked ->
+                botTokenInput.transformationMethod = if (checked) {
+                    null
+                } else {
+                    PasswordTransformationMethod.getInstance()
+                }
+                botTokenInput.setSelection(botTokenInput.text.length)
+            }
+        }
+        val saveTelegram = Button(this).apply {
+            text = "Save Telegram Settings"
+            setOnClickListener { saveTelegramSettings() }
+        }
+        val testTelegram = Button(this).apply {
+            text = "Test Telegram"
+            setOnClickListener { testTelegramConnection() }
+        }
+
+        root.addView(telegramHeading)
+        root.addView(telegramHelp)
+        root.addView(botTokenInput, matchWidth())
+        root.addView(chatIdInput, matchWidth())
+        root.addView(showToken, matchWidth())
+        root.addView(saveTelegram, matchWidth())
+        root.addView(testTelegram, matchWidth())
+        setContentView(android.widget.ScrollView(this).apply { addView(root) })
+    }
+
+    private fun saveTelegramSettings() {
+        val token = botTokenInput.text.toString().trim()
+        val chatId = chatIdInput.text.toString().trim()
+        if (!Regex("^\\d{5,15}:[A-Za-z0-9_-]{20,}$").matches(token) ||
+            !Regex("^-?\\d{1,20}$").matches(chatId)) {
+            toast("Enter a valid Telegram bot token and numeric Chat ID.")
+            return
+        }
+        try {
+            TelegramSettings.save(this, token, chatId)
+            toast("Telegram settings saved securely on this phone.")
+        } catch (_: Exception) {
+            toast("Unable to save settings. Try again.")
+        }
+    }
+
+    private fun testTelegramConnection() {
+        val token = botTokenInput.text.toString().trim()
+        val chatId = chatIdInput.text.toString().trim()
+        toast("Testing Telegram connection…")
+        executor.execute {
+            val result = try {
+                TelegramSettings.sendTest(token, chatId)
+            } catch (error: Exception) {
+                "Telegram test failed: ${error.message ?: "Connection error"}"
+            }
+            runOnUiThread { toast(result) }
+        }
     }
 
     private fun matchWidth() = LinearLayout.LayoutParams(
